@@ -1,0 +1,124 @@
+## 1. vm.c - Original OP_NEGATE Implementation
+
+In the original implementation, OP_NEGATE removes the top value, negates it, and pushes the result back.
+
+```c
+case OP_NEGATE:
+  push(-pop());
+  break;
+```
+
+This works correctly, but the stack is decremented and incremented unnecessarily.
+
+---
+
+## 2. vm.c - Optimized OP_NEGATE
+
+I modified OP_NEGATE to negate the top value directly.
+
+```c
+case OP_NEGATE:
+  vm.stack[vm.stackCount - 1] =
+      -vm.stack[vm.stackCount - 1];
+  break;
+```
+
+This avoids calling pop() and push().
+
+The value changes, but stackCount stays the same.
+
+
+## 3. vm.c - Original Binary Operation Macro
+
+The original BINARY_OP macro pops two values, performs the arithmetic operation, and pushes the result onto the stack.
+
+```c
+#define BINARY_OP(op) \
+  do { \
+    double b = pop(); \
+    double a = pop(); \
+    push(a op b); \
+  } while (false)
+```
+
+The first value popped is the right operand because clox uses a last-in, first-out stack.
+
+---
+
+## 4. vm.c - Optimized Binary Operation Macro
+
+I modified the macro to read both operands directly from the stack and store the result in the left operand's position.
+
+```c
+#define BINARY_OP(op) \
+  do { \
+    double b = vm.stack[vm.stackCount - 1]; \
+    double a = vm.stack[vm.stackCount - 2]; \
+    vm.stack[vm.stackCount - 2] = a op b; \
+    vm.stackCount--; \
+  } while (false)
+```
+
+Instead of two pops and one push, the optimized version directly updates the stack.
+
+The stack count decreases once because two operands are replaced by one result.
+
+For example:
+
+```text
+Before OP_ADD:
+Stack: [4, 6]
+stackCount: 2
+
+After OP_ADD:
+Stack: [10]
+stackCount: 1
+```
+
+The same optimization works for addition, subtraction, multiplication, and division.
+
+---
+
+## 5. vm.c - Arithmetic Instruction Cases
+
+The arithmetic instructions can continue using the BINARY_OP macro.
+
+```c
+case OP_ADD:
+  BINARY_OP(+);
+  break;
+
+case OP_SUBTRACT:
+  BINARY_OP(-);
+  break;
+
+case OP_MULTIPLY:
+  BINARY_OP(*);
+  break;
+
+case OP_DIVIDE:
+  BINARY_OP(/);
+  break;
+```
+
+Because BINARY_OP has been optimized, these instructions automatically use the updated implementation.
+
+---
+
+## 6. Performance Comparison
+
+The original OP_NEGATE implementation performs these operations:
+
+```text
+1. Pop the top value.
+2. Negate the value.
+3. Push the result back.
+```
+
+The optimized implementation performs:
+
+```text
+1. Access the top value.
+2. Negate it directly.
+```
+
