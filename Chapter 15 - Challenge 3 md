@@ -1,0 +1,125 @@
+## 1. vm.h - Update the VM Structure
+
+I replaced the fixed-size stack and stackTop pointer with a dynamically allocated array and two integer fields.
+
+```c
+typedef struct {
+  Chunk* chunk;
+  uint8_t* ip;
+
+  Value* stack;
+  int stackCount;
+  int stackCapacity;
+} VM;
+```
+
+- stack stores the dynamically allocated values.
+- stackCount tracks how many values are currently on the stack.
+- stackCapacity tracks the total number of allocated slots.
+
+The original STACK_MAX constant is no longer needed for this implementation.
+
+---
+
+## 2. vm.c - Initialize the Stack
+
+I updated resetStack() and initVM() to initialize the dynamic stack.
+
+```c
+static void resetStack() {
+  vm.stackCount = 0;
+}
+
+void initVM() {
+  vm.stack = NULL;
+  vm.stackCapacity = 0;
+  resetStack();
+}
+```
+
+The stack starts empty and does not allocate memory until a value is pushed.
+
+---
+
+## 3. vm.c - Update push()
+
+I modified push() so that it checks whether there is enough available space before storing a value.
+
+```c
+void push(Value value) {
+  if (vm.stackCapacity < vm.stackCount + 1) {
+    int oldCapacity = vm.stackCapacity;
+
+    vm.stackCapacity = GROW_CAPACITY(oldCapacity);
+
+    vm.stack = GROW_ARRAY(
+        Value,
+        vm.stack,
+        oldCapacity,
+        vm.stackCapacity);
+  }
+
+  vm.stack[vm.stackCount] = value;
+  vm.stackCount++;
+}
+```
+
+When the stack is full, GROW_CAPACITY() increases its capacity, and GROW_ARRAY() reallocates the memory.
+
+This uses the memory management helpers already defined in Crafting Interpreters.
+
+---
+
+## 4. vm.c - Update pop()
+
+I changed pop() to use stackCount instead of stackTop.
+
+```c
+Value pop() {
+  vm.stackCount--;
+  return vm.stack[vm.stackCount];
+}
+```
+
+The function decreases stackCount and returns the most recently pushed value.
+
+---
+
+## 5. vm.c - Free the Stack
+
+Since the stack now allocates memory dynamically, the VM must release that memory when it is no longer needed.
+
+```c
+void freeVM() {
+  FREE_ARRAY(Value, vm.stack, vm.stackCapacity);
+
+  vm.stack = NULL;
+  vm.stackCount = 0;
+  vm.stackCapacity = 0;
+}
+```
+
+This prevents allocated stack memory from being left behind when the interpreter shuts down.
+
+---
+
+## 6. vm.c - Update Stack Tracing
+
+The original debugging code uses the stackTop pointer to display the stack contents.
+
+I updated the tracing code to use stackCount.
+
+```c
+printf("          ");
+
+for (int i = 0; i < vm.stackCount; i++) {
+  printf("[ ");
+  printValue(vm.stack[i]);
+  printf(" ]");
+}
+
+printf("\n");
+```
+
+This displays all the active values currently stored in the stack.
+
