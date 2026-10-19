@@ -1,0 +1,222 @@
+## 1. chunk.h - LineStart Structure and Updated Chunk
+
+The LineStart structure records the byte offset and the source line number. The Chunk structure stores a dynamic array of these records.
+
+```c
+typedef struct {
+  int offset;
+  int line;
+} LineStart;
+
+typedef struct {
+  int count;
+  int capacity;
+  uint8_t* code;
+  ValueArray constants;
+
+  int lineCount;
+  int lineCapacity;
+  LineStart* lines;
+} Chunk;
+```
+
+The function declarations are:
+
+```c
+void initChunk(Chunk* chunk);
+void freeChunk(Chunk* chunk);
+void writeChunk(Chunk* chunk, uint8_t byte, int line);
+int addConstant(Chunk* chunk, Value value);
+int getLine(Chunk* chunk, int instruction);
+```
+
+---
+
+## 2. chunk.c - Initialize the Chunk
+
+I updated initChunk() to initialize the compressed line array separately from the bytecode array.
+
+```c
+void initChunk(Chunk* chunk) {
+  chunk->count = 0;
+  chunk->capacity = 0;
+  chunk->code = NULL;
+
+  chunk->lineCount = 0;
+  chunk->lineCapacity = 0;
+  chunk->lines = NULL;
+
+  initValueArray(&chunk->constants);
+}
+```
+
+---
+
+## 3. chunk.c - Free Allocated Memory
+
+I updated freeChunk() to release the compressed line array along with the bytecode and constants.
+
+```c
+void freeChunk(Chunk* chunk) {
+  FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
+  FREE_ARRAY(LineStart, chunk->lines, chunk->lineCapacity);
+
+  freeValueArray(&chunk->constants);
+  initChunk(chunk);
+}
+```
+
+---
+
+## 4. chunk.c - Updated writeChunk()
+
+This function adds a new byte to the bytecode array. It only creates a new LineStart record when the source line changes.
+
+```c
+void writeChunk(Chunk* chunk, uint8_t byte, int line) {
+  // Grow the bytecode array if necessary.
+  if (chunk->capacity < chunk->count + 1) {
+    int oldCapacity = chunk->capacity;
+    chunk->capacity = GROW_CAPACITY(oldCapacity);
+
+    chunk->code = GROW_ARRAY(
+        uint8_t,
+        chunk->code,
+        oldCapacity,
+        chunk->capacity);
+  }
+
+  // Store the new byte.
+  chunk->code[chunk->count] = byte;
+  chunk->count++;
+
+  // If the source line has not changed,
+  // there is no need for another LineStart record.
+  if (chunk->lineCount > 0 &&
+      chunk->lines[chunk->lineCount - 1].line == line) {
+    return;
+  }
+
+  // Grow the line information array if necessary.
+  if (chunk->lineCapacity < chunk->lineCount + 1) {
+    int oldCapacity = chunk->lineCapacity;
+    chunk->lineCapacity = GROW_CAPACITY(oldCapacity);
+
+    chunk->lines = GROW_ARRAY(
+        LineStart,
+        chunk->lines,
+        oldCapacity,
+        chunk->lineCapacity);
+  }
+
+  // Record the beginning of the new source line.
+  LineStart* lineStart = &chunk->lines[chunk->lineCount++];
+
+  lineStart->offset = chunk->count - 1;
+  lineStart->line = line;
+}
+```
+
+---
+
+## 5. chunk.c - Implement getLine()
+
+This function finds the source line associated with a bytecode offset using binary search.
+
+```c
+int getLine(Chunk* chunk, int instruction) {
+  // Check that the requested offset is valid.
+  if (instruction < 0 ||
+      instruction >= chunk->count ||
+      chunk->lineCount == 0) {
+    return -1;
+  }
+
+  int start = 0;
+  int end = chunk->lineCount - 1;
+
+  while (start <= end) {
+    int mid = start + (end - start) / 2;
+
+    LineStart* line = &chunk->lines[mid];
+
+    if (instruction < line->offset) {
+      end = mid - 1;
+    } else if (
+        mid == chunk->lineCount - 1 ||
+        instruction < chunk->lines[mid + 1].offset) {
+      return line->line;
+    } else {
+      start = mid + 1;
+    }
+  }
+
+  return -1;
+}
+```
+
+---
+
+## 6. debug.c - Update Line Information Display
+
+In disassembleInstruction(), I replaced the original line-number lookup with getLine().
+
+```c
+int disassembleInstruction(Chunk* chunk, int offset) {
+  printf("%04d ", offset);
+
+  int line = getLine(chunk, offset);
+
+  if (offset > 0 &&
+      line == getLine(chunk, offset - 1)) {
+    printf("   | ");
+  } else {
+    printf("%4d ", line);
+  }
+
+  // The existing instruction decoding logic
+  // continues here.
+}
+```
+
+---
+
+## 7. Example of Compressed Line Information
+
+Suppose six consecutive bytes have these source line numbers:
+
+```text
+Byte offset:   0  1  2  3  4  5
+Source line:   7  7  7  7  8  8
+```
+
+The original implementation stores:
+
+```text
+[7, 7, 7, 7, 8, 8]
+```
+
+The compressed implementation only stores:
+
+```text
+LineStart { offset: 0, line: 7 }
+LineStart { offset: 4, line: 8 }
+```
+
+The getLine() function retrieves the correct line for each byte offset.
+
+For example:
+
+```c
+getLine(&chunk, 0); // Returns 7
+getLine(&chunk, 2); // Returns 7
+getLine(&chunk, 4); // Returns 8
+getLine(&chunk, 5); // Returns 8
+```
+
+## Files Modified
+
+- chunk.h
+- chunk.c
+- debug.c
+
