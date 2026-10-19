@@ -1,0 +1,160 @@
+## 1. chunk.h - Add OP_CONSTANT_LONG
+
+I added OP_CONSTANT_LONG to the existing OpCode enum.
+
+The following shows the combined opcodes used in Chapters 14 and 15.
+
+```c
+typedef enum {
+  OP_CONSTANT,
+  OP_CONSTANT_LONG,
+  OP_ADD,
+  OP_SUBTRACT,
+  OP_MULTIPLY,
+  OP_DIVIDE,
+  OP_NEGATE,
+  OP_RETURN
+} OpCode;
+```
+
+OP_CONSTANT uses one byte for the constant index.
+
+OP_CONSTANT_LONG uses three bytes for the constant index.
+
+---
+
+## 2. chunk.h - Declare writeConstant()
+
+I added a function declaration that allows the interpreter to choose the appropriate constant instruction.
+
+```c
+void writeConstant(Chunk* chunk, Value value, int line);
+```
+
+---
+
+## 3. chunk.c - Implement writeConstant()
+
+This function adds the constant to the constant pool and chooses which instruction to write based on the constant's index.
+
+```c
+void writeConstant(Chunk* chunk, Value value, int line) {
+  // A 24-bit operand supports indices up to 0xFFFFFF.
+  // Check before adding another constant.
+  if (chunk->constants.count > 0xFFFFFF) {
+    fprintf(stderr, "Too many constants in chunk.\n");
+    exit(1);
+  }
+
+  int index = addConstant(chunk, value);
+
+  // Use the short instruction if the index fits in one byte.
+  if (index < 256) {
+    writeChunk(chunk, OP_CONSTANT, line);
+    writeChunk(chunk, (uint8_t)index, line);
+  } else {
+    // Use the long instruction for larger indices.
+    writeChunk(chunk, OP_CONSTANT_LONG, line);
+
+    // Store the 24-bit index in little-endian order.
+    writeChunk(chunk, (uint8_t)(index & 0xff), line);
+    writeChunk(chunk, (uint8_t)((index >> 8) & 0xff), line);
+    writeChunk(chunk, (uint8_t)((index >> 16) & 0xff), line);
+  }
+}
+```
+
+This implementation requires stdio.h and stdlib.h in chunk.c for fprintf(), stderr, and exit().
+
+---
+
+## 4. debug.c - Add longConstantInstruction()
+
+I added a helper function to decode and display OP_CONSTANT_LONG instructions.
+
+```c
+static int longConstantInstruction(const char* name,
+                                   Chunk* chunk,
+                                   int offset) {
+  uint32_t constant =
+      (uint32_t)chunk->code[offset + 1] |
+      ((uint32_t)chunk->code[offset + 2] << 8) |
+      ((uint32_t)chunk->code[offset + 3] << 16);
+
+  printf("%-16s %4u '", name, (unsigned int)constant);
+
+  printValue(chunk->constants.values[constant]);
+
+  printf("'\n");
+
+  return offset + 4;
+}
+```
+
+The function reads the three-byte constant index, combines the bytes into one number, and uses that index to locate the stored constant.
+
+It returns offset + 4 because the instruction occupies four bytes total: one opcode and three operand bytes.
+
+---
+
+## 5. debug.c - Update disassembleInstruction()
+
+I added the following case to the existing disassembler switch statement.
+
+```c
+case OP_CONSTANT_LONG:
+  return longConstantInstruction(
+      "OP_CONSTANT_LONG", chunk, offset);
+```
+
+This allows the disassembler to recognize and display the new instruction.
+
+---
+
+## 6. vm.c - Read a Long Constant
+
+To make the new instruction executable in the Chapter 15 virtual machine, I added a helper macro inside run().
+
+```c
+#define READ_LONG() \
+  ((uint32_t)READ_BYTE() | \
+   ((uint32_t)READ_BYTE() << 8) | \
+   ((uint32_t)READ_BYTE() << 16))
+
+#define READ_LONG_CONSTANT() \
+  (vm.chunk->constants.values[READ_LONG()])
+```
+
+READ_LONG() combines three bytes into a 24-bit index using the same little-endian ordering used when writing the instruction.
+
+READ_LONG_CONSTANT() uses that index to retrieve the value from the chunk's constant pool.
+
+---
+
+## 7. vm.c - Execute OP_CONSTANT_LONG
+
+I added the following case to the instruction switch statement inside run().
+
+```c
+case OP_CONSTANT_LONG: {
+  Value constant = READ_LONG_CONSTANT();
+  push(constant);
+  break;
+}
+```
+
+This loads the selected constant onto the VM stack, just like the original OP_CONSTANT instruction.
+
+At the end of run(), I also added:
+
+```c
+#undef READ_LONG
+#undef READ_LONG_CONSTANT
+```
+
+## Files Modified
+
+- chunk.h
+- chunk.c
+- debug.c
+- vm.c (additional execution support for Chapter 15)
